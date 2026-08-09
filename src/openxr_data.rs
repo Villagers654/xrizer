@@ -7,9 +7,11 @@ use glam::f32::{Quat, Vec3};
 use log::{info, warn};
 use openvr as vr;
 use openxr as xr;
+use serde::Deserialize;
 use std::mem::ManuallyDrop;
 #[cfg(all(not(test), not(feature = "static-openxr")))]
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{
     RwLock,
     atomic::{AtomicI64, Ordering},
@@ -107,6 +109,106 @@ fn make_version() -> u32 {
         + env!("CARGO_PKG_VERSION_PATCH").parse::<u32>().unwrap_or(1)
 }
 
+/// Build the OpenVR raw tracking space used by PSVR2 room setup. The Toolkit
+/// driver bakes its saved chaperone transform into device poses while its
+/// passthrough camera remains in the driver's raw universe, so undo that
+/// transform only for explicitly opted-in calibration applications.
+fn raw_tracking_space_pose() -> xr::Posef {
+    if std::env::var_os("XRIZER_FORCE_RAW_TRACKING_SPACE").is_none() {
+        return xr::Posef::IDENTITY;
+    }
+
+    #[derive(Deserialize)]
+    struct ChaperoneInfo {
+        universes: Vec<Universe>,
+    }
+    #[derive(Deserialize)]
+    struct Universe {
+        standing: Standing,
+    }
+    #[derive(Deserialize)]
+    struct Standing {
+        translation: [f32; 3],
+        yaw: f32,
+    }
+
+    let path = std::env::var_os("XRIZER_RAW_CHAPERONE_PATH")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("STEAM_ROOT").map(|root| {
+                PathBuf::from(root).join("config/playstation_vr2/chaperone_info.vrchap")
+            })
+        })
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| {
+                PathBuf::from(home)
+                    .join(".local/share/Steam/config/playstation_vr2/chaperone_info.vrchap")
+            })
+        });
+    let Some(path) = path else {
+        warn!("Raw tracking space requested, but no Steam configuration path is available");
+        return xr::Posef::IDENTITY;
+    };
+    let data = match std::fs::read(&path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            info!("No saved PSVR2 chaperone transform; raw space is identity");
+            return xr::Posef::IDENTITY;
+        }
+        Err(error) => {
+            warn!(
+                "Couldn't read PSVR2 chaperone data from {}: {error}",
+                path.display()
+            );
+            return xr::Posef::IDENTITY;
+        }
+    };
+    let info: ChaperoneInfo = match serde_json::from_slice(&data) {
+        Ok(info) => info,
+        Err(error) => {
+            warn!(
+                "Couldn't parse PSVR2 chaperone data from {}: {error}",
+                path.display()
+            );
+            return xr::Posef::IDENTITY;
+        }
+    };
+    let Some(standing) = info.universes.first().map(|universe| &universe.standing) else {
+        warn!("PSVR2 chaperone data has no universe; raw space is identity");
+        return xr::Posef::IDENTITY;
+    };
+    let orientation = Quat::from_axis_angle(Vec3::NEG_Y, standing.yaw);
+    let position = orientation * Vec3::from_array(standing.translation);
+    info!(
+        "Raw tracking space removes chaperone yaw {:.6} and translation [{:.6}, {:.6}, {:.6}]",
+        standing.yaw, position.x, position.y, position.z
+    );
+    xr::Posef {
+        orientation: xr::Quaternionf {
+            x: orientation.x,
+            y: orientation.y,
+            z: orientation.z,
+            w: orientation.w,
+        },
+        position: xr::Vector3f {
+            x: position.x,
+            y: position.y,
+            z: position.z,
+        },
+    }
+}
+
+fn resolve_tracking_origin(origin: vr::ETrackingUniverseOrigin) -> vr::ETrackingUniverseOrigin {
+    if origin == vr::ETrackingUniverseOrigin::RawAndUncalibrated
+        && std::env::var_os("XRIZER_FORCE_RAW_TRACKING_SPACE").is_none()
+    {
+        warn!("Raw tracking space requested without explicit opt-in; using STAGE/Standing");
+        vr::ETrackingUniverseOrigin::Standing
+    } else {
+        origin
+    }
+}
+
 impl<C: Compositor> OpenXrData<C> {
     pub fn new(injector: &Injector) -> Result<Self, InitError> {
         #[cfg(all(not(test), feature = "static-openxr"))]
@@ -173,14 +275,15 @@ impl<C: Compositor> OpenXrData<C> {
             .system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)
             .map_err(InitError::SystemCreationFailed)?;
 
+        let initial_origin = resolve_tracking_origin(
+            if std::env::var_os("XRIZER_FORCE_RAW_TRACKING_SPACE").is_some() {
+                vr::ETrackingUniverseOrigin::RawAndUncalibrated
+            } else {
+                vr::ETrackingUniverseOrigin::Standing
+            },
+        );
         let session_data = SessionReadGuard(RwLock::new(ManuallyDrop::new(
-            SessionData::new(
-                &instance,
-                system_id,
-                vr::ETrackingUniverseOrigin::Standing,
-                None,
-            )?
-            .0,
+            SessionData::new(&instance, system_id, initial_origin, None)?.0,
         )));
 
         let display_time = if exts.khr_convert_timespec_time {
@@ -262,7 +365,18 @@ impl<C: Compositor> OpenXrData<C> {
     }
 
     pub fn set_tracking_space(&self, space: vr::ETrackingUniverseOrigin) {
-        self.session_data.0.write().unwrap().current_origin = space;
+        let space = resolve_tracking_origin(space);
+        let mut session_data = self.session_data.0.write().unwrap();
+        if space == vr::ETrackingUniverseOrigin::RawAndUncalibrated {
+            match session_data
+                .session
+                .create_reference_space(xr::ReferenceSpaceType::STAGE, raw_tracking_space_pose())
+            {
+                Ok(raw_space) => session_data.raw_space = raw_space,
+                Err(error) => warn!("Failed to rebuild raw tracking space: {error}"),
+            }
+        }
+        session_data.current_origin = space;
     }
 
     pub fn get_tracking_space(&self) -> vr::ETrackingUniverseOrigin {
@@ -455,6 +569,7 @@ pub struct SessionData {
     local_space_adjusted: xr::Space,
     stage_space_reference: xr::Space,
     stage_space_adjusted: xr::Space,
+    raw_space: xr::Space,
     pub current_origin: vr::ETrackingUniverseOrigin,
 
     pub input_data: crate::input::InputSessionData,
@@ -560,6 +675,9 @@ impl SessionData {
                 .create_reference_space(xr::ReferenceSpaceType::STAGE, xr::Posef::IDENTITY)
                 .unwrap()
         });
+        let raw_space = session
+            .create_reference_space(xr::ReferenceSpaceType::STAGE, raw_tracking_space_pose())
+            .unwrap();
 
         let mut buf = xr::EventDataBuffer::new();
         loop {
@@ -592,6 +710,7 @@ impl SessionData {
                 local_space_adjusted,
                 stage_space_reference,
                 stage_space_adjusted,
+                raw_space,
                 input_data: Default::default(),
                 comp_data: Default::default(),
                 overlay_data: Default::default(),
@@ -657,10 +776,7 @@ impl SessionData {
         match origin {
             vr::ETrackingUniverseOrigin::Seated => &self.local_space_adjusted,
             vr::ETrackingUniverseOrigin::Standing => &self.stage_space_adjusted,
-            vr::ETrackingUniverseOrigin::RawAndUncalibrated => {
-                crate::warn_unimplemented!("RawAndUncalibrated tracking space");
-                &self.stage_space_reference
-            }
+            vr::ETrackingUniverseOrigin::RawAndUncalibrated => &self.raw_space,
         }
     }
 
@@ -669,6 +785,11 @@ impl SessionData {
         match ty {
             xr::ReferenceSpaceType::VIEW => &self.view_space,
             xr::ReferenceSpaceType::LOCAL => &self.local_space_adjusted,
+            xr::ReferenceSpaceType::STAGE
+                if self.current_origin == vr::ETrackingUniverseOrigin::RawAndUncalibrated =>
+            {
+                &self.raw_space
+            }
             xr::ReferenceSpaceType::STAGE => &self.stage_space_adjusted,
             other => panic!("Unsupported reference space type: {other:?}"),
         }
@@ -679,10 +800,7 @@ impl SessionData {
         match self.current_origin {
             vr::ETrackingUniverseOrigin::Seated => xr::ReferenceSpaceType::LOCAL,
             vr::ETrackingUniverseOrigin::Standing => xr::ReferenceSpaceType::STAGE,
-            vr::ETrackingUniverseOrigin::RawAndUncalibrated => {
-                crate::warn_unimplemented!("RawAndUncalibrated tracking space");
-                xr::ReferenceSpaceType::STAGE
-            }
+            vr::ETrackingUniverseOrigin::RawAndUncalibrated => xr::ReferenceSpaceType::STAGE,
         }
     }
 
