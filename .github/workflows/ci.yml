@@ -41,7 +41,7 @@ jobs:
         with:
           files: ${{ env.UBUNTU_DOCKERFILE }}
       - id: name
-        run: echo "container_path=${{ env.REGISTRY }}/${GITHUB_REPOSITORY@L}" >> "$GITHUB_OUTPUT"
+        run: echo "container_path=ghcr.io/supreeeme/xrizer" >> "$GITHUB_OUTPUT"
     outputs:
       should-build: ${{ steps.changed.outputs.any_changed }}
       container-path: ${{ steps.name.outputs.container_path }}
