@@ -784,11 +784,40 @@ impl vr::IVRSystem026_Interface for System {
     }
     fn ApplyTransform(
         &self,
-        _: *mut vr::TrackedDevicePose_t,
-        _: *const vr::TrackedDevicePose_t,
-        _: *const vr::HmdMatrix34_t,
+        output: *mut vr::TrackedDevicePose_t,
+        tracked_device_pose: *const vr::TrackedDevicePose_t,
+        transform: *const vr::HmdMatrix34_t,
     ) {
-        todo!()
+        let (Some(output), Some(tracked_device_pose), Some(transform)) = (unsafe {
+            (
+                output.as_mut(),
+                tracked_device_pose.as_ref(),
+                transform.as_ref(),
+            )
+        }) else {
+            return;
+        };
+
+        // OpenVR defines this as device-to-absolute * local transform. Keep
+        // the tracking flags and velocities from the source pose, and use a
+        // temporary result so callers may safely pass the same pose for input
+        // and output.
+        let device = tracked_device_pose.mDeviceToAbsoluteTracking;
+        let mut result = *tracked_device_pose;
+        for row in 0..3 {
+            for col in 0..3 {
+                result.mDeviceToAbsoluteTracking.m[row][col] = device.m[row][0]
+                    * transform.m[0][col]
+                    + device.m[row][1] * transform.m[1][col]
+                    + device.m[row][2] * transform.m[2][col];
+            }
+            result.mDeviceToAbsoluteTracking.m[row][3] = device.m[row][0] * transform.m[0][3]
+                + device.m[row][1] * transform.m[1][3]
+                + device.m[row][2] * transform.m[2][3]
+                + device.m[row][3];
+        }
+
+        *output = result;
     }
     fn GetTrackedDeviceActivityLevel(
         &self,
