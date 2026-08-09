@@ -15,7 +15,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # Reuse upstream's public toolchain image. Fork CI must not depend on a
+  # package that cannot exist until this workflow has already run once.
+  IMAGE_NAME: supreeeme/xrizer
   UBUNTU_DOCKERFILE: .github/workflows/ubuntu.dockerfile
 
 permissions:

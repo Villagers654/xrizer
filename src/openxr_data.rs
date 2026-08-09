@@ -8,6 +8,8 @@ use log::{info, warn};
 use openvr as vr;
 use openxr as xr;
 use std::mem::ManuallyDrop;
+#[cfg(all(not(test), not(feature = "static-openxr")))]
+use std::path::Path;
 use std::sync::{
     RwLock,
     atomic::{AtomicI64, Ordering},
@@ -111,8 +113,13 @@ impl<C: Compositor> OpenXrData<C> {
         let entry = xr::Entry::linked();
 
         #[cfg(all(not(test), not(feature = "static-openxr")))]
-        let entry = unsafe { xr::Entry::load() }
-            .expect("Failed to load OpenXR loader — is libopenxr-loader installed?");
+        // Distribution runtime packages commonly install only the loader's
+        // SONAME while the unversioned name lives in a separate development
+        // package. Try both so packaged xrizer builds work out of the box.
+        let entry = unsafe {
+            xr::Entry::load().or_else(|_| xr::Entry::load_from(Path::new("libopenxr_loader.so.1")))
+        }
+        .expect("Failed to load OpenXR loader — is libopenxr-loader installed?");
 
         #[cfg(test)]
         let entry =
@@ -260,6 +267,20 @@ impl<C: Compositor> OpenXrData<C> {
 
     pub fn get_tracking_space(&self) -> vr::ETrackingUniverseOrigin {
         self.session_data.get().current_origin
+    }
+
+    /// Return the active runtime's room-scale bounds in meters.
+    ///
+    /// OpenVR applications obtain this through IVRChaperone while OpenXR
+    /// exposes it on the STAGE reference space. Keeping the conversion here
+    /// avoids runtime- or headset-specific configuration files.
+    pub fn play_area_bounds(&self) -> Option<xr::Extent2Df> {
+        self.session_data
+            .get()
+            .session
+            .reference_space_bounds_rect(xr::ReferenceSpaceType::STAGE)
+            .ok()
+            .flatten()
     }
 
     pub fn reset_tracking_space(&self, origin: vr::ETrackingUniverseOrigin) {

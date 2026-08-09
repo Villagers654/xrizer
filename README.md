@@ -1,5 +1,10 @@
 # xrizer - XR-ize your OpenVR games
 
+> **RiftLift compatibility fork:** this fork adds generic Linux loader and
+> OpenXR STAGE-boundary behavior used by
+> [RiftLift](https://github.com/Villagers654/RiftLift). The changes remain
+> runtime- and headset-independent so they can be proposed upstream cleanly.
+
 xrizer is a reimplementation of OpenVR on top of OpenXR. This enables you to run OpenVR games through any OpenXR runtime without running SteamVR.
 
 Note that xrizer is currently immature. Many things are likely broken, so please open bugs! For a more mature solution, check out [OpenComposite](https://gitlab.com/znixian/OpenComposite), which some of the code in this repo is based on.

@@ -1,6 +1,35 @@
 use crate::openxr_data::RealOpenXrData;
 use openvr as vr;
-use std::sync::Arc;
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
+
+fn bounds_visible_state() -> &'static AtomicBool {
+    static BOUNDS_VISIBLE: OnceLock<AtomicBool> = OnceLock::new();
+    BOUNDS_VISIBLE.get_or_init(|| AtomicBool::new(false))
+}
+
+fn play_area_quad(width: f32, height: f32) -> vr::HmdQuad_t {
+    let half_x = width * 0.5;
+    let half_z = height * 0.5;
+    vr::HmdQuad_t {
+        vCorners: [
+            vr::HmdVector3_t {
+                v: [-half_x, 0.0, -half_z],
+            },
+            vr::HmdVector3_t {
+                v: [half_x, 0.0, -half_z],
+            },
+            vr::HmdVector3_t {
+                v: [half_x, 0.0, half_z],
+            },
+            vr::HmdVector3_t {
+                v: [-half_x, 0.0, half_z],
+            },
+        ],
+    }
+}
 
 #[derive(macros::InterfaceImpl)]
 #[interface = "IVRChaperone"]
@@ -24,12 +53,11 @@ impl vr::IVRChaperone004_Interface for Chaperone {
         self.openxr.reset_tracking_space(origin);
     }
 
-    fn ForceBoundsVisible(&self, _: bool) {
-        crate::warn_unimplemented!("ForceBoundsVisible");
+    fn ForceBoundsVisible(&self, visible: bool) {
+        bounds_visible_state().store(visible, Ordering::SeqCst);
     }
     fn AreBoundsVisible(&self) -> bool {
-        crate::warn_unimplemented!("AreBoundsVisible");
-        false
+        bounds_visible_state().load(Ordering::SeqCst)
     }
     fn GetBoundsColor(
         &self,
@@ -55,21 +83,41 @@ impl vr::IVRChaperone004_Interface for Chaperone {
         crate::warn_unimplemented!("ReloadInfo");
     }
     fn GetPlayAreaRect(&self, rect: *mut vr::HmdQuad_t) -> bool {
-        crate::warn_unimplemented!("GetPlayAreaRect");
-        unsafe {
-            *rect = Default::default();
+        let Some(bounds) = self.openxr.play_area_bounds() else {
+            return false;
+        };
+        if rect.is_null() {
+            return false;
         }
-        false
+        unsafe { rect.write(play_area_quad(bounds.width, bounds.height)) };
+        true
     }
     fn GetPlayAreaSize(&self, size_x: *mut f32, size_z: *mut f32) -> bool {
-        crate::warn_unimplemented!("GetPlayAreaSize");
-        unsafe {
-            *size_x = 1.0;
-            *size_z = 1.0;
+        let Some(bounds) = self.openxr.play_area_bounds() else {
+            return false;
         };
+        if size_x.is_null() || size_z.is_null() {
+            return false;
+        }
+        unsafe {
+            size_x.write(bounds.width);
+            size_z.write(bounds.height);
+        }
         true
     }
     fn GetCalibrationState(&self) -> vr::ChaperoneCalibrationState {
         vr::ChaperoneCalibrationState::OK
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn play_area_is_centered_on_the_stage_origin() {
+        let quad = play_area_quad(2.0, 4.0);
+        assert_eq!(quad.vCorners[0].v, [-1.0, 0.0, -2.0]);
+        assert_eq!(quad.vCorners[2].v, [1.0, 0.0, 2.0]);
     }
 }
