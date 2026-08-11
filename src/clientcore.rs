@@ -155,7 +155,17 @@ impl IVRClientCore003_Interface for ClientCore {
                     }
                 }
             })
-            .flatten();
+            .flatten()
+            // Wine clients can pass a Windows path through IVRInput while the
+            // native OpenVR implementation needs a host path. Launchers may
+            // provide that path explicitly; consume it at the same lifecycle
+            // point as Proton's startup manifest so it cannot be lost at the
+            // ABI boundary.
+            .or_else(|| {
+                std::env::var("REVIVE_ACTION_MANIFEST")
+                    .ok()
+                    .and_then(|path| CString::new(path).ok())
+            });
 
         if let Some(data) = self.openxr.read().unwrap().as_ref() {
             warn!("ClientCore::Init already called");
