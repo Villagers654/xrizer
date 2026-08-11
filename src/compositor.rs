@@ -571,12 +571,19 @@ impl vr::IVRCompositor029_Interface for Compositor {
     ) {
         crate::warn_unimplemented!("FadeToColor");
     }
-    fn GetCumulativeStats(
-        &self,
-        _pStats: *mut vr::Compositor_CumulativeStats,
-        _nStatsSizeInBytes: u32,
-    ) {
-        todo!()
+    fn GetCumulativeStats(&self, stats: *mut vr::Compositor_CumulativeStats, stats_size: u32) {
+        if stats.is_null() || stats_size == 0 {
+            return;
+        }
+
+        // XRizer does not retain historical compositor counters. Returning a
+        // size-bounded zero snapshot represents that state while preserving
+        // compatibility with callers using older or newer struct revisions.
+        let bytes = std::cmp::min(
+            stats_size as usize,
+            std::mem::size_of::<vr::Compositor_CumulativeStats>(),
+        );
+        unsafe { std::ptr::write_bytes(stats.cast::<u8>(), 0, bytes) };
     }
     fn GetFrameTimeRemaining(&self) -> f32 {
         crate::warn_unimplemented!("GetFrameTimeRemaining");
@@ -1807,6 +1814,27 @@ mod tests {
 
         timings[0].m_nSize = 0;
         assert_eq!(f.comp.GetFrameTimings(timings.as_mut_ptr(), 3), 0);
+    }
+
+    #[test]
+    fn get_cumulative_stats() {
+        let f = Fixture::new();
+        let mut stats = vr::Compositor_CumulativeStats::default();
+        unsafe { std::ptr::write_bytes(&mut stats, 0xff, 1) };
+
+        f.comp.GetCumulativeStats(
+            &mut stats,
+            std::mem::size_of::<vr::Compositor_CumulativeStats>() as u32,
+        );
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                (&raw const stats).cast::<u8>(),
+                std::mem::size_of::<vr::Compositor_CumulativeStats>(),
+            )
+        };
+        assert!(bytes.iter().all(|byte| *byte == 0));
+
+        f.comp.GetCumulativeStats(std::ptr::null_mut(), u32::MAX);
     }
 
     #[test]
