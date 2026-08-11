@@ -836,18 +836,35 @@ impl vr::IVROverlay028_Interface for OverlayMan {
     }
 
     fn CloseMessageOverlay(&self) {
-        todo!()
+        // XRizer does not own a system dashboard in which to close modal UI.
+        // Keep this API non-fatal for applications that probe it.
+        crate::warn_unimplemented!("CloseMessageOverlay");
     }
     fn ShowMessageOverlay(
         &self,
-        _: *const c_char,
-        _: *const c_char,
+        text: *const c_char,
+        caption: *const c_char,
         _: *const c_char,
         _: *const c_char,
         _: *const c_char,
         _: *const c_char,
     ) -> vr::VRMessageOverlayResponse {
-        todo!()
+        let text = if text.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(text) }
+                .to_str()
+                .unwrap_or("<non-UTF-8>")
+        };
+        let caption = if caption.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(caption) }
+                .to_str()
+                .unwrap_or("<non-UTF-8>")
+        };
+        log::warn!("OpenVR message overlay unavailable: {caption:?}: {text:?}");
+        vr::VRMessageOverlayResponse::CouldntFindSystemOverlay
     }
     fn SetKeyboardPositionForOverlay(&self, _: vr::VROverlayHandle_t, _: vr::HmdRect2_t) {
         todo!()
