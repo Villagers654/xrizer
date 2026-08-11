@@ -343,10 +343,10 @@ impl vr::IVRCompositor029_Interface for Compositor {
         false
     }
     fn IsMotionSmoothingSupported(&self) -> bool {
-        todo!()
+        false
     }
     fn IsMotionSmoothingEnabled(&self) -> bool {
-        todo!()
+        false
     }
     fn SubmitExplicitTimingData(&self) -> vr::EVRCompositorError {
         if *self.timing_mode.lock().unwrap() == vr::EVRCompositorTimingMode::Implicit {
@@ -397,17 +397,18 @@ impl vr::IVRCompositor029_Interface for Compositor {
     }
 
     fn UnlockGLSharedTextureForAccess(&self, _glSharedTextureHandle: vr::glSharedTextureHandle_t) {
-        todo!()
+        crate::warn_unimplemented!("UnlockGLSharedTextureForAccess");
     }
     fn LockGLSharedTextureForAccess(&self, _glSharedTextureHandle: vr::glSharedTextureHandle_t) {
-        todo!()
+        crate::warn_unimplemented!("LockGLSharedTextureForAccess");
     }
     fn ReleaseSharedGLTexture(
         &self,
         _glTextureId: vr::glUInt_t,
         _glSharedTextureHandle: vr::glSharedTextureHandle_t,
     ) -> bool {
-        todo!()
+        crate::warn_unimplemented!("ReleaseSharedGLTexture");
+        false
     }
     fn GetMirrorTextureGL(
         &self,
@@ -415,10 +416,11 @@ impl vr::IVRCompositor029_Interface for Compositor {
         _pglTextureId: *mut vr::glUInt_t,
         _pglSharedTextureHandle: *mut vr::glSharedTextureHandle_t,
     ) -> vr::EVRCompositorError {
-        todo!()
+        crate::warn_unimplemented!("GetMirrorTextureGL");
+        vr::EVRCompositorError::IncompatibleVersion
     }
     fn ReleaseMirrorTextureD3D11(&self, _pD3D11ShaderResourceView: *mut std::ffi::c_void) {
-        todo!()
+        crate::warn_unimplemented!("ReleaseMirrorTextureD3D11");
     }
     fn GetMirrorTextureD3D11(
         &self,
@@ -449,7 +451,7 @@ impl vr::IVRCompositor029_Interface for Compositor {
             .for_each(|ctrl| ctrl.with_any_graphics_mut::<set_suspend_render>(bSuspend));
     }
     fn ForceReconnectProcess(&self) {
-        todo!()
+        crate::warn_unimplemented!("ForceReconnectProcess");
     }
     fn ForceInterleavedReprojectionOn(&self, _: bool) {
         crate::warn_unimplemented!("ForceInterleavedReprojectionOn");
@@ -459,31 +461,31 @@ impl vr::IVRCompositor029_Interface for Compositor {
         false
     }
     fn CompositorDumpImages(&self) {
-        todo!()
+        crate::warn_unimplemented!("CompositorDumpImages");
     }
     fn IsMirrorWindowVisible(&self) -> bool {
-        todo!()
+        false
     }
     fn HideMirrorWindow(&self) {
-        todo!()
+        crate::warn_unimplemented!("HideMirrorWindow");
     }
     fn ShowMirrorWindow(&self) {
-        todo!()
+        crate::warn_unimplemented!("ShowMirrorWindow");
     }
     fn CanRenderScene(&self) -> bool {
         true
     }
     fn GetLastFrameRenderer(&self) -> u32 {
-        todo!()
+        0
     }
     fn GetCurrentSceneFocusProcess(&self) -> u32 {
-        todo!()
+        std::process::id()
     }
     fn IsFullscreen(&self) -> bool {
         true
     }
     fn CompositorQuit(&self) {
-        todo!()
+        crate::warn_unimplemented!("CompositorQuit");
     }
     fn CompositorGoToBack(&self) {
         crate::warn_unimplemented!("CompositorGoToBack");
@@ -558,7 +560,12 @@ impl vr::IVRCompositor029_Interface for Compositor {
             .for_each(|ctrl| ctrl.with_any_graphics_mut::<set_fade_grid>(bFadeGridIn));
     }
     fn GetCurrentFadeColor(&self, _bBackground: bool) -> vr::HmdColor_t {
-        todo!()
+        vr::HmdColor_t {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        }
     }
     fn FadeToColor(
         &self,
