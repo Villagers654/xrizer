@@ -307,17 +307,38 @@ impl vr::IVRCompositor029_Interface for Compositor {
     fn GetPosesForFrame(
         &self,
         _unPosePredictionID: u32,
-        _pPoseArray: *mut vr::TrackedDevicePose_t,
-        _unPoseArrayCount: u32,
+        pPoseArray: *mut vr::TrackedDevicePose_t,
+        unPoseArrayCount: u32,
     ) -> vr::EVRCompositorError {
-        todo!()
+        if unPoseArrayCount == 0 {
+            return vr::EVRCompositorError::None;
+        }
+        if pPoseArray.is_null() {
+            return vr::EVRCompositorError::RequestFailed;
+        }
+
+        // OpenXR does not expose OpenVR's historical prediction IDs. Returning
+        // the newest available poses preserves useful tracking for callers
+        // without inventing a pose-history buffer in the translation layer.
+        let poses =
+            unsafe { std::slice::from_raw_parts_mut(pPoseArray, unPoseArrayCount as usize) };
+        self.input
+            .force(|_| Input::new(self.openxr.clone()))
+            .get_poses(poses, None);
+        vr::EVRCompositorError::None
     }
     fn GetLastPosePredictionIDs(
         &self,
-        _pRenderPosePredictionID: *mut u32,
-        _pGamePosePredictionID: *mut u32,
+        pRenderPosePredictionID: *mut u32,
+        pGamePosePredictionID: *mut u32,
     ) -> vr::EVRCompositorError {
-        crate::warn_unimplemented!("GetLastPosePredictionIDs");
+        let prediction_id = self.metrics.index.load(Ordering::Relaxed);
+        if !pRenderPosePredictionID.is_null() {
+            unsafe { pRenderPosePredictionID.write(prediction_id) };
+        }
+        if !pGamePosePredictionID.is_null() {
+            unsafe { pGamePosePredictionID.write(prediction_id) };
+        }
         vr::EVRCompositorError::None
     }
     fn GetCompositorBenchmarkResults(
@@ -1821,6 +1842,42 @@ mod tests {
 
         timings[0].m_nSize = 0;
         assert_eq!(f.comp.GetFrameTimings(timings.as_mut_ptr(), 3), 0);
+    }
+
+    #[test]
+    fn pose_prediction_queries_return_current_tracking() {
+        let f = Fixture::new();
+        let mut render_id = u32::MAX;
+        let mut game_id = u32::MAX;
+
+        assert_eq!(
+            vr::IVRCompositor029_Interface::GetLastPosePredictionIDs(
+                &*f.comp,
+                &mut render_id,
+                &mut game_id,
+            ),
+            None
+        );
+        assert_eq!(render_id, game_id);
+
+        assert_eq!(
+            vr::IVRCompositor029_Interface::GetPosesForFrame(
+                &*f.comp,
+                render_id,
+                std::ptr::null_mut(),
+                0,
+            ),
+            None
+        );
+        assert_eq!(
+            vr::IVRCompositor029_Interface::GetPosesForFrame(
+                &*f.comp,
+                render_id,
+                std::ptr::null_mut(),
+                1,
+            ),
+            RequestFailed
+        );
     }
 
     #[test]
