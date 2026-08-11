@@ -161,14 +161,15 @@ impl vr::IVRApplications008_Interface for Applications {
     }
     fn GetApplicationKeyByProcessId(
         &self,
-        _: u32,
+        process_id: u32,
         _: *mut c_char,
         _: u32,
     ) -> vr::EVRApplicationError {
-        todo!()
+        log::debug!("application key requested for unregistered process {process_id}");
+        vr::EVRApplicationError::UnknownApplication
     }
     fn GetApplicationKeyByIndex(&self, _: u32, _: *mut c_char, _: u32) -> vr::EVRApplicationError {
-        todo!()
+        vr::EVRApplicationError::InvalidIndex
     }
     fn GetApplicationCount(&self) -> u32 {
         crate::warn_unimplemented!("GetApplicationCount");
