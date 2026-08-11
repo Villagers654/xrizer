@@ -582,8 +582,41 @@ impl vr::IVRCompositor029_Interface for Compositor {
         crate::warn_unimplemented!("GetFrameTimeRemaining");
         0.0
     }
-    fn GetFrameTimings(&self, _pTiming: *mut vr::Compositor_FrameTiming, _nFrames: u32) -> u32 {
-        todo!()
+    fn GetFrameTimings(&self, timing: *mut vr::Compositor_FrameTiming, frames: u32) -> u32 {
+        if timing.is_null() || frames == 0 || !timing.is_aligned() {
+            return 0;
+        }
+
+        // OpenVR uses the first entry's size as the stride for the entire array so
+        // callers built against older struct revisions remain compatible.
+        let stride = unsafe { (&raw const (*timing).m_nSize).read() } as usize;
+        let minimum_size = offset_of!(vr::Compositor_FrameTiming, m_HmdPose)
+            + std::mem::size_of::<vr::TrackedDevicePose_t>();
+        if stride < minimum_size || stride % std::mem::align_of::<vr::Compositor_FrameTiming>() != 0
+        {
+            return 0;
+        }
+
+        let frames = frames as usize;
+        if frames.checked_mul(stride).is_none() {
+            return 0;
+        }
+
+        let mut filled = 0;
+        for index in 0..frames {
+            let entry: *mut vr::Compositor_FrameTiming =
+                unsafe { timing.cast::<u8>().add(index * stride).cast() };
+            unsafe { (&raw mut (*entry).m_nSize).write(stride as u32) };
+
+            // The API returns frames oldest-to-newest. GetFrameTiming already
+            // clamps requests older than its available history.
+            let frames_ago = (frames - index - 1) as u32;
+            if !self.GetFrameTiming(entry, frames_ago) {
+                break;
+            }
+            filled += 1;
+        }
+        filled
     }
     fn GetFrameTiming(&self, timing: *mut vr::Compositor_FrameTiming, _frames_ago: u32) -> bool {
         if timing.is_null() || !timing.is_aligned() {
@@ -1753,6 +1786,27 @@ mod tests {
             (&raw mut (*timing.as_mut_ptr()).m_nSize).write(0);
         }
         assert!(!f.comp.GetFrameTiming(timing.as_mut_ptr(), 1));
+    }
+
+    #[test]
+    fn get_frame_timings() {
+        let f = Fixture::new();
+        assert_eq!(f.wait_get_poses(), None);
+        assert_eq!(f.submit(vr::EVREye::Left), None);
+        assert_eq!(f.submit(vr::EVREye::Right), None);
+
+        let mut timings = [vr::Compositor_FrameTiming::default(); 3];
+        timings[0].m_nSize = std::mem::size_of::<vr::Compositor_FrameTiming>() as u32;
+
+        assert_eq!(f.comp.GetFrameTimings(timings.as_mut_ptr(), 3), 3);
+        assert!(timings.iter().all(|timing| {
+            timing.m_nSize == std::mem::size_of::<vr::Compositor_FrameTiming>() as u32
+        }));
+        assert_eq!(f.comp.GetFrameTimings(std::ptr::null_mut(), 3), 0);
+        assert_eq!(f.comp.GetFrameTimings(timings.as_mut_ptr(), 0), 0);
+
+        timings[0].m_nSize = 0;
+        assert_eq!(f.comp.GetFrameTimings(timings.as_mut_ptr(), 3), 0);
     }
 
     #[test]
