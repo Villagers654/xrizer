@@ -1,5 +1,9 @@
 # xrizer - XR-ize your OpenVR games
 
+> **Development moved:** RiftLift's maintained xrizer source now lives in
+> [`Villagers654/RiftLift/components/xrizer`](https://github.com/Villagers654/RiftLift/tree/main/components/xrizer).
+> This repository is retained as a read-only historical fork.
+
 > **RiftLift compatibility fork:** this fork adds generic Linux loader and
 > OpenXR STAGE-boundary behavior used by
 > [RiftLift](https://github.com/Villagers654/RiftLift). The changes remain
