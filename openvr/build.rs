@@ -4,7 +4,7 @@ use prettyplease::unparse;
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident};
 use regex::Regex;
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::{BTreeMap, btree_map::Entry};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -512,10 +512,10 @@ impl FromStr for HeaderVersion {
 }
 
 /// key is item name, value is (item, mod ident)
-type UnversionedItems = HashMap<String, (syn::Item, syn::Ident)>;
+type UnversionedItems = BTreeMap<String, (syn::Item, syn::Ident)>;
 
 /// key is interface name i.e. IVRSystem)
-type VersionedInterfaces = HashMap<String, Vec<VersionedInterface>>;
+type VersionedInterfaces = BTreeMap<String, Vec<VersionedInterface>>;
 
 struct VersionedInterface {
     version: u32,
@@ -531,14 +531,14 @@ enum ImplItem {
     TraitImpl(Box<syn::ItemImpl>),
 }
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct ImplMapKey {
     /// The type that the corresponding item is being implemented on
     impl_type: String,
     /// The module this item originated from
     vr_mod: String,
 }
-type ImplMap = HashMap<ImplMapKey, Vec<ImplItem>>;
+type ImplMap = BTreeMap<ImplMapKey, Vec<ImplItem>>;
 
 /// Processes the given version for an item and extracts the versioned struct and vtable from our
 /// unversioned interfaces.
@@ -654,7 +654,7 @@ fn versionify_interface(
     }
 }
 
-type IncompatibleItems = HashMap<String, syn::Item>;
+type IncompatibleItems = BTreeMap<String, syn::Item>;
 fn process_vr_namespace_content(
     unversioned: &mut UnversionedItems,
     versioned: &mut VersionedInterfaces,
