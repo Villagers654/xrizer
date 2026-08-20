@@ -780,26 +780,30 @@ impl vr::IVRCompositor029_Interface for Compositor {
 
         let session_data = self.openxr.session_data.get();
         let mut frame_lock = session_data.comp_data.0.lock().unwrap();
-        let Some(ctrl) = frame_lock.as_mut() else {
-            debug!("no frame controller - not presenting frame");
-            return;
-        };
-
         if *self.frame_state.lock().unwrap() != FrameState::Begun {
             return;
         }
 
-        trace!("presenting frame");
-        let system = self.system.force(|i| System::new(self.openxr.clone(), i));
-        let display_time = self.openxr.display_time.get();
-        let overlays = self.overlays.get();
+        if let Some(ctrl) = frame_lock.as_mut() {
+            trace!("presenting frame");
+            let system = self.system.force(|i| System::new(self.openxr.clone(), i));
+            let display_time = self.openxr.display_time.get();
+            let overlays = self.overlays.get();
 
-        ctrl.with_any_graphics_mut::<end_frame>((
-            &session_data,
-            &system,
-            display_time,
-            overlays.as_deref(),
-        ));
+            ctrl.with_any_graphics_mut::<end_frame>((
+                &session_data,
+                &system,
+                display_time,
+                overlays.as_deref(),
+            ));
+        } else {
+            // Explicit-timing clients may hand off after Submit rejected their
+            // first texture, before its graphics API has created a real
+            // OpenXR session. No xrBeginFrame occurred in that case, but the
+            // OpenVR frame boundary still needs to close so the next frame can
+            // retry and tracking snapshots can advance.
+            debug!("no frame controller - completing virtual frame");
+        }
 
         self.frame_state
             .lock()
@@ -2136,6 +2140,29 @@ mod tests {
         );
         assert_eq!(f.wait_get_poses(), None);
         assert_eq!(f.comp.SubmitExplicitTimingData(), None);
+        f.comp.PostPresentHandoff();
+        f.check_frame_state(fakexr::FrameState::Ended);
+    }
+
+    #[test]
+    fn explicit_timing_handoff_before_graphics_session_allows_retry() {
+        let f = Fixture::new();
+        f.comp.SetExplicitTimingMode(
+            vr::EVRCompositorTimingMode::Explicit_ApplicationPerformsPostPresentHandoff,
+        );
+
+        let session = f.comp.openxr.session_data.get().session.as_raw();
+        fakexr::set_session_state(session, xr::SessionState::FOCUSED);
+
+        assert_eq!(f.comp.SubmitExplicitTimingData(), None);
+        assert_eq!(*f.comp.frame_state.lock().unwrap(), FrameState::Begun);
+        f.comp.PostPresentHandoff();
+        assert_eq!(*f.comp.frame_state.lock().unwrap(), FrameState::Submitted);
+        assert_eq!(f.comp.metrics.index.load(Ordering::Relaxed), 1);
+
+        assert_eq!(f.comp.SubmitExplicitTimingData(), None);
+        assert_eq!(f.submit(vr::EVREye::Left), None);
+        assert_eq!(f.submit(vr::EVREye::Right), None);
         f.comp.PostPresentHandoff();
         f.check_frame_state(fakexr::FrameState::Ended);
     }
