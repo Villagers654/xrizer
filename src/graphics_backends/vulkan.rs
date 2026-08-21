@@ -855,22 +855,30 @@ impl PipelineData {
 }
 
 #[inline]
+fn gamma_encoded_format(format: vk::Format) -> Option<vk::Format> {
+    match format {
+        vk::Format::R8G8B8A8_UNORM | vk::Format::R8G8B8A8_SRGB => Some(vk::Format::R8G8B8A8_SRGB),
+        vk::Format::B8G8R8A8_UNORM | vk::Format::B8G8R8A8_SRGB => Some(vk::Format::B8G8R8A8_SRGB),
+        vk::Format::BC3_SRGB_BLOCK => Some(format),
+        _ => None,
+    }
+}
+
+#[inline]
 fn get_colorspace_corrected_format(format: vk::Format, color_space: vr::EColorSpace) -> vk::Format {
     static UNSUPPORTED: LazyLock<Mutex<HashSet<vk::Format>>> = LazyLock::new(Mutex::default);
     // https://github.com/ValveSoftware/openvr/wiki/Vulkan#image-formats
     match color_space {
-        vr::EColorSpace::Auto | vr::EColorSpace::Gamma => match format {
-            vk::Format::R8G8B8A8_UNORM | vk::Format::R8G8B8A8_SRGB => vk::Format::R8G8B8A8_SRGB,
-            vk::Format::B8G8R8A8_UNORM | vk::Format::B8G8R8A8_SRGB => vk::Format::B8G8R8A8_SRGB,
-            vk::Format::BC3_SRGB_BLOCK => format,
-            _ => {
-                if UNSUPPORTED.lock().unwrap().insert(format) {
-                    warn!("Unhandled texture format: {format:?}");
-                }
-                format
+        // OpenVR defines Auto as gamma for 8-bit formats and linear for
+        // higher-precision formats, matching OpenXR's format semantics.
+        vr::EColorSpace::Auto => gamma_encoded_format(format).unwrap_or(format),
+        vr::EColorSpace::Gamma => gamma_encoded_format(format).unwrap_or_else(|| {
+            if UNSUPPORTED.lock().unwrap().insert(format) {
+                warn!("Cannot reinterpret gamma-encoded texture format: {format:?}");
             }
-        },
-        vr::EColorSpace::Linear => todo!("Linear colorspace not implemented yet"),
+            format
+        }),
+        vr::EColorSpace::Linear => format,
     }
 }
 
@@ -908,5 +916,38 @@ fn new_entry() -> ash::Entry {
         ash::Entry::from_static_fn(ash::StaticFn {
             get_instance_proc_addr: fakexr::vulkan::get_instance_proc_addr,
         })
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+
+    #[test]
+    fn auto_keeps_float_textures_linear() {
+        let format = vk::Format::R16G16B16A16_SFLOAT;
+
+        assert_eq!(
+            get_colorspace_corrected_format(format, vr::EColorSpace::Auto),
+            format
+        );
+    }
+
+    #[test]
+    fn explicit_linear_keeps_the_texture_format() {
+        let format = vk::Format::R32G32B32A32_SFLOAT;
+
+        assert_eq!(
+            get_colorspace_corrected_format(format, vr::EColorSpace::Linear),
+            format
+        );
+    }
+
+    #[test]
+    fn auto_reinterprets_eight_bit_unorm_as_srgb() {
+        assert_eq!(
+            get_colorspace_corrected_format(vk::Format::R8G8B8A8_UNORM, vr::EColorSpace::Auto),
+            vk::Format::R8G8B8A8_SRGB
+        );
     }
 }
